@@ -1,0 +1,27 @@
+name: Go Lint on Push
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "*/**"
+      - go.*
+      - "!.github/**"
+      - "!tmp/**"
+jobs:
+  golangci:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Configure git for private modules
+        env:
+          TOKEN: ${{ secrets.IQSC_BOT_TOKEN }}
+        run: git config --global url."https://iqsc-bot:${TOKEN}@github.com".insteadOf "https://github.com"
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v2
+        with:
+          args: --timeout=3m

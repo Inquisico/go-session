@@ -1,0 +1,52 @@
+name: Go Test on Push
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "*/**"
+      - go.*
+      - "!.github/**"
+      - "!tmp/**"
+
+jobs:
+  go-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go: ["1.18"]
+
+    steps:
+      - name: Setup Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: ${{ matrix.go }}
+
+      - uses: actions/cache@v2
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-
+
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Configure git for private modules
+        env:
+          TOKEN: ${{ secrets.IQSC_BOT_TOKEN }}
+        run: git config --global url."https://iqsc-bot:${TOKEN}@github.com".insteadOf "https://github.com"
+
+      - name: Test
+        run: go test -json ./... > test.json
+        env:
+          GOPRIVATE: github.com/inquisico
+
+      - name: Annotate tests
+        if: always()
+        uses: guyarb/golang-test-annotations@v0.4.0
+        with:
+          test-results: test.json
