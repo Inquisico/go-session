@@ -37,15 +37,15 @@ var (
 	ErrUnmodified = errors.New("unmodified")
 )
 
-type option func(*sessionData)
+type Option func(*sessionData)
 
-func WithLifetime(lifetime time.Duration) option {
+func WithLifetime(lifetime time.Duration) Option {
 	return func(s *sessionData) {
 		s.deadline = time.Now().Add(lifetime).UTC()
 	}
 }
 
-func WithDeadline(deadline time.Time) option {
+func WithDeadline(deadline time.Time) Option {
 	return func(s *sessionData) {
 		s.deadline = deadline
 	}
@@ -157,7 +157,7 @@ func (s *Manager) Expire(ctx context.Context, expiry time.Time) {
 //
 // Most applications will use the LoadAndSave() middleware and will not need to
 // use this method.
-func (s *Manager) Load(ctx context.Context, token string, options ...option) (context.Context, error) {
+func (s *Manager) Load(ctx context.Context, token string, options ...Option) (context.Context, error) {
 	if _, ok := ctx.Value(s.contextKey).(*sessionData); ok {
 		return ctx, nil
 	}
@@ -262,7 +262,7 @@ func (s *Manager) Commit(ctx context.Context) (string, time.Time, error) {
 // Destroy deletes the session data from the session store and sets the session
 // status to Destroyed. Any further operations in the same request cycle will
 // result in a new session being created.
-func (s *Manager) Destroy(ctx context.Context, options ...option) error {
+func (s *Manager) Destroy(ctx context.Context, options ...Option) error {
 	sd := s.getSessionDataFromContext(ctx)
 
 	sd.mu.Lock()
@@ -421,7 +421,7 @@ func (s *Manager) Keys(ctx context.Context) []string {
 // See https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/
 // Session_Management_Cheat_Sheet.md#renew-the-session-id-after-any-privilege-level-change
 // for additional information.
-func (s *Manager) RenewToken(ctx context.Context, options ...option) error {
+func (s *Manager) RenewToken(ctx context.Context, options ...Option) error {
 	sd := s.getSessionDataFromContext(ctx)
 
 	sd.mu.Lock()
