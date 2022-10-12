@@ -39,13 +39,13 @@ var (
 
 type option func(*sessionData)
 
-func withLifetime(lifetime time.Duration) option {
+func WithLifetime(lifetime time.Duration) option {
 	return func(s *sessionData) {
 		s.deadline = time.Now().Add(lifetime).UTC()
 	}
 }
 
-func withDeadline(deadline time.Time) option {
+func WithDeadline(deadline time.Time) option {
 	return func(s *sessionData) {
 		s.deadline = deadline
 	}
