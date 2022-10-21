@@ -172,7 +172,7 @@ func (s *Manager) Load(ctx context.Context, token string, options ...Option) (co
 
 	b, found, err := s.doStoreFind(ctx, token)
 	if err != nil {
-		return nil, err
+		return ctx, err
 	} else if !found {
 		sd := newSessionData(s.Lifetime)
 		for _, option := range options {
@@ -186,7 +186,7 @@ func (s *Manager) Load(ctx context.Context, token string, options ...Option) (co
 		token:  token,
 	}
 	if sd.deadline, sd.values, err = s.Codec.Decode(b); err != nil {
-		return nil, err
+		return ctx, err
 	}
 
 	// Mark the session data as modified if an idle timeout is being used. This
@@ -416,7 +416,7 @@ func (s *Manager) Keys(ctx context.Context) []string {
 //
 // To mitigate the risk of session fixation attacks, it's important that you call
 // RenewToken before making any changes to privilege levels (e.g. login and
-// logout operations). 
+// logout operations).
 
 // See https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/
 // Session_Management_Cheat_Sheet.md#renew-the-session-id-after-any-privilege-level-change
