@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	foo = "foo"
-	bar = "bar"
+	foo     = "foo"
+	bar     = "bar"
 	example = "example"
 )
 
@@ -149,8 +149,8 @@ func TestSessionManager_Load(t *testing.T) {
 		if err == nil {
 			t.Errorf("no error loading from session manager: %v", err)
 		}
-		if newCtx != nil {
-			t.Error("returned context is unexpectedly not nil")
+		if newCtx != ctx {
+			t.Error("returned context is unexpectedly not the old context")
 		}
 	})
 
@@ -200,8 +200,8 @@ func TestSessionManager_Load(t *testing.T) {
 		if err == nil {
 			t.Errorf("no error loading from session manager: %v", err)
 		}
-		if newCtx != nil {
-			t.Error("returned context is unexpectedly nil")
+		if newCtx != ctx {
+			t.Error("returned context is unexpectedly not the old context")
 		}
 	})
 }
