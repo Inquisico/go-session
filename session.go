@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"net/http"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -107,9 +106,6 @@ type Manager struct {
 	// Store controls the session store where the session data is persisted.
 	Store scs.Store
 
-	// Cookie contains the configuration settings for session cookies.
-	Cookie scs.SessionCookie
-
 	// Codec controls the encoder/decoder used to transform session data to a
 	// byte slice for use by the session store. By default session data is
 	// encoded/decoded using encoding/gob.
@@ -129,15 +125,6 @@ func NewManager() *Manager {
 		Store:       memstore.New(),
 		Codec:       scs.GobCodec{},
 		contextKey:  generateContextKey(),
-		Cookie: scs.SessionCookie{
-			Name:     "session",
-			Domain:   "",
-			HttpOnly: true,
-			Path:     "/",
-			Persist:  true,
-			Secure:   false,
-			SameSite: http.SameSiteLaxMode,
-		},
 	}
 	return s
 }
