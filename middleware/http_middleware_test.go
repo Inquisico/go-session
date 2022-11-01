@@ -224,8 +224,8 @@ func TestDestroy(t *testing.T) {
 	header, _ := ts.execute(t, "/destroy")
 	cookie := header.Get("Set-Cookie")
 
-	if strings.HasPrefix(cookie, fmt.Sprintf("%s=;", sessionManager.Cookie.Name)) == false {
-		t.Fatalf("got %q: expected prefix %q", cookie, fmt.Sprintf("%s=;", sessionManager.Cookie.Name))
+	if strings.HasPrefix(cookie, fmt.Sprintf("%s=;", httpSessionManager.Cookie.Name)) == false {
+		t.Fatalf("got %q: expected prefix %q", cookie, fmt.Sprintf("%s=;", httpSessionManager.Cookie.Name))
 	}
 	if strings.Contains(cookie, "Expires=Thu, 01 Jan 1970 00:00:01 GMT") == false {
 		t.Fatalf("got %q: expected to contain %q", cookie, "Expires=Thu, 01 Jan 1970 00:00:01 GMT")
@@ -294,8 +294,8 @@ func TestRememberMe(t *testing.T) {
 	t.Parallel()
 
 	sessionManager := session.NewManager()
-	sessionManager.Cookie.Persist = false
 	httpSessionManager := NewHTTPSessionManager(sessionManager)
+	httpSessionManager.Cookie.Persist = false
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/put-normal", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

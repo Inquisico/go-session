@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/alexedwards/scs/v2"
 	"github.com/inquisico/session"
 	"github.com/rs/zerolog/log"
 )
@@ -19,6 +20,9 @@ func defaultErrorFunc(w http.ResponseWriter, _ *http.Request, err error) {
 
 type HTTPSessionManager struct {
 	manager *session.Manager
+
+	// Cookie contains the configuration settings for session cookies.
+	Cookie scs.SessionCookie
 
 	// ErrorFunc allows you to control behavior when an error is encountered by
 	// the LoadAndSave middleware. The default behavior is for a HTTP 500
@@ -33,6 +37,15 @@ func NewHTTPSessionManager(manager *session.Manager) *HTTPSessionManager {
 	return &HTTPSessionManager{
 		manager:   manager,
 		ErrorFunc: defaultErrorFunc,
+		Cookie: scs.SessionCookie{
+			Name:     "session",
+			Domain:   "",
+			HttpOnly: true,
+			Path:     "/",
+			Persist:  true,
+			Secure:   false,
+			SameSite: http.SameSiteLaxMode,
+		},
 	}
 }
 
@@ -42,7 +55,7 @@ func NewHTTPSessionManager(manager *session.Manager) *HTTPSessionManager {
 func (s *HTTPSessionManager) LoadAndSave(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var token string
-		cookie, err := r.Cookie(s.manager.Cookie.Name)
+		cookie, err := r.Cookie(s.Cookie.Name)
 		if err == nil {
 			token = cookie.Value
 		}
@@ -95,19 +108,19 @@ func (s *HTTPSessionManager) LoadAndSave(next http.Handler) http.Handler {
 func (s *HTTPSessionManager) WriteSessionCookie(ctx context.Context, w http.ResponseWriter, token string,
 	expiry time.Time) {
 	cookie := &http.Cookie{
-		Name:     s.manager.Cookie.Name,
+		Name:     s.Cookie.Name,
 		Value:    token,
-		Path:     s.manager.Cookie.Path,
-		Domain:   s.manager.Cookie.Domain,
-		Secure:   s.manager.Cookie.Secure,
-		HttpOnly: s.manager.Cookie.HttpOnly,
-		SameSite: s.manager.Cookie.SameSite,
+		Path:     s.Cookie.Path,
+		Domain:   s.Cookie.Domain,
+		Secure:   s.Cookie.Secure,
+		HttpOnly: s.Cookie.HttpOnly,
+		SameSite: s.Cookie.SameSite,
 	}
 
 	if expiry.IsZero() {
 		cookie.Expires = time.Unix(1, 0)
 		cookie.MaxAge = -1
-	} else if s.manager.Cookie.Persist || s.manager.GetBool(ctx, "__rememberMe") {
+	} else if s.Cookie.Persist || s.manager.GetBool(ctx, "__rememberMe") {
 		cookie.Expires = time.Unix(expiry.Unix()+1, 0)        // Round up to the nearest second.
 		cookie.MaxAge = int(time.Until(expiry).Seconds() + 1) // Round up to the nearest second.
 	}
