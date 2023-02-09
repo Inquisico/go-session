@@ -13,6 +13,7 @@ import (
 
 	"github.com/alexedwards/scs/v2"
 	"github.com/alexedwards/scs/v2/memstore"
+	"github.com/inquisico/session/store"
 )
 
 // Status represents the state of the session data during a request cycle.
@@ -104,7 +105,7 @@ type Manager struct {
 	Lifetime time.Duration
 
 	// Store controls the session store where the session data is persisted.
-	Store scs.Store
+	Store store.Store
 
 	// Codec controls the encoder/decoder used to transform session data to a
 	// byte slice for use by the session store. By default session data is
@@ -122,7 +123,7 @@ func NewManager() *Manager {
 	s := &Manager{
 		IdleTimeout: 0,
 		Lifetime:    24 * time.Hour,
-		Store:       memstore.New(),
+		Store:       store.NewStoreWrapper(memstore.New()),
 		Codec:       scs.GobCodec{},
 		contextKey:  generateContextKey(),
 	}
@@ -157,7 +158,7 @@ func (s *Manager) Load(ctx context.Context, token string, options ...Option) (co
 		return s.addSessionDataToContext(ctx, sd), nil
 	}
 
-	b, found, err := s.doStoreFind(ctx, token)
+	b, found, err := s.Store.Find(ctx, token)
 	if err != nil {
 		return ctx, err
 	} else if !found {
@@ -239,7 +240,7 @@ func (s *Manager) Commit(ctx context.Context) (string, time.Time, error) {
 		}
 	}
 
-	if err := s.doStoreCommit(ctx, sd.token, b, expiry); err != nil {
+	if err := s.Store.Commit(ctx, sd.token, b, expiry); err != nil {
 		return "", time.Time{}, err
 	}
 
@@ -255,7 +256,7 @@ func (s *Manager) Destroy(ctx context.Context, options ...Option) error {
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
-	err := s.doStoreDelete(ctx, sd.token)
+	err := s.Store.Delete(ctx, sd.token)
 	if err != nil {
 		return err
 	}
@@ -414,7 +415,7 @@ func (s *Manager) RenewToken(ctx context.Context, options ...Option) error {
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
-	err := s.doStoreDelete(ctx, sd.token)
+	err := s.Store.Delete(ctx, sd.token)
 	if err != nil {
 		return err
 	}
@@ -440,7 +441,7 @@ func (s *Manager) RenewToken(ctx context.Context, options ...Option) error {
 func (s *Manager) MergeSession(ctx context.Context, token string) error {
 	sd := s.getSessionDataFromContext(ctx)
 
-	b, found, err := s.doStoreFind(ctx, token)
+	b, found, err := s.Store.Find(ctx, token)
 	if err != nil {
 		return err
 	} else if !found {
@@ -469,7 +470,7 @@ func (s *Manager) MergeSession(ctx context.Context, token string) error {
 	}
 
 	sd.status = Modified
-	return s.doStoreDelete(ctx, token)
+	return s.Store.Delete(ctx, token)
 }
 
 // Status returns the current status of the session data.
@@ -669,7 +670,7 @@ func (s *Manager) RememberMe(ctx context.Context, val bool) {
 // executes the provided function fn for each session. If the session store
 // being used does not support iteration then Iterate will panic.
 func (s *Manager) Iterate(ctx context.Context, fn func(context.Context) error) error {
-	allSessions, err := s.doStoreAll(ctx)
+	allSessions, err := s.Store.All(ctx)
 	if err != nil {
 		return err
 	}
@@ -730,48 +731,4 @@ func (s *Manager) getSessionDataFromContext(ctx context.Context) *sessionData {
 		panic("scs: no session data in context")
 	}
 	return c
-}
-
-func (s *Manager) doStoreDelete(ctx context.Context, token string) (err error) {
-	c, ok := s.Store.(interface {
-		DeleteCtx(context.Context, string) error
-	})
-	if ok {
-		return c.DeleteCtx(ctx, token)
-	}
-	return s.Store.Delete(token)
-}
-
-func (s *Manager) doStoreFind(ctx context.Context, token string) (b []byte, found bool, err error) {
-	c, ok := s.Store.(interface {
-		FindCtx(context.Context, string) ([]byte, bool, error)
-	})
-	if ok {
-		return c.FindCtx(ctx, token)
-	}
-	return s.Store.Find(token)
-}
-
-func (s *Manager) doStoreCommit(ctx context.Context, token string, b []byte, expiry time.Time) (err error) {
-	c, ok := s.Store.(interface {
-		CommitCtx(context.Context, string, []byte, time.Time) error
-	})
-	if ok {
-		return c.CommitCtx(ctx, token, b, expiry)
-	}
-	return s.Store.Commit(token, b, expiry)
-}
-
-func (s *Manager) doStoreAll(ctx context.Context) (map[string][]byte, error) {
-	cs, ok := s.Store.(scs.IterableCtxStore)
-	if ok {
-		return cs.AllCtx(ctx)
-	}
-
-	is, ok := s.Store.(scs.IterableStore)
-	if ok {
-		return is.All()
-	}
-
-	panic(fmt.Sprintf("type %T does not support iteration", s.Store))
 }
