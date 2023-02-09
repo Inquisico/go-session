@@ -1,4 +1,4 @@
-module github.com/inquisico/session/store/redis
+module github.com/inquisico/go-session/store/redis
 
 go 1.18
 
