@@ -1,10 +1,14 @@
 linters:
   enable:
+    - forbidigo
     - goconst
     - gocritic
     - gocyclo
+    - godot
+    - gosec
     - lll
     - misspell
+    - nosprintfhostport
     - revive
     - wastedassign
     - whitespace
