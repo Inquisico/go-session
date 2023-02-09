@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/inquisico/session"
+	"github.com/inquisico/go-session"
 )
 
 const (

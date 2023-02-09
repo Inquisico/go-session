@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/alexedwards/scs/v2"
-	"github.com/inquisico/session"
+	"github.com/inquisico/go-session"
 	"github.com/rs/zerolog/log"
 )
 

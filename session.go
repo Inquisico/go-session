@@ -11,7 +11,7 @@ import (
 
 	"github.com/alexedwards/scs/v2"
 	"github.com/alexedwards/scs/v2/memstore"
-	"github.com/inquisico/session/store"
+	"github.com/inquisico/go-session/store"
 )
 
 // Status represents the state of the session data during a request cycle.

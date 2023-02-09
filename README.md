@@ -1,6 +1,6 @@
 # Session Management
 
-[![Go Lint](https://github.com/Inquisico/session/actions/workflows/golangci-lint-push.yaml/badge.svg)](https://github.com/Inquisico/session/actions/workflows/golangci-lint-push.yaml) [![Go Test](https://github.com/Inquisico/session/actions/workflows/go-test-push.yaml/badge.svg)](https://github.com/Inquisico/session/actions/workflows/go-test-push.yaml) [![Release Drafter](https://github.com/Inquisico/session/actions/workflows/release-drafter.yaml/badge.svg)](https://github.com/Inquisico/session/actions/workflows/release-drafter.yaml)
+[![Go Lint](https://github.com/inquisico/go-session/actions/workflows/golangci-lint-push.yaml/badge.svg)](https://github.com/inquisico/go-session/actions/workflows/golangci-lint-push.yaml) [![Go Test](https://github.com/inquisico/go-session/actions/workflows/go-test-push.yaml/badge.svg)](https://github.com/inquisico/go-session/actions/workflows/go-test-push.yaml) [![Release Drafter](https://github.com/inquisico/go-session/actions/workflows/release-drafter.yaml/badge.svg)](https://github.com/inquisico/go-session/actions/workflows/release-drafter.yaml)
 
 Session implements a session management pattern following the [OWASP security guidelines](https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Session_Management_Cheat_Sheet.md). Session data is stored on the server, and a randomly-generated unique session token (or *session ID*) is communicated to and from the client in a session cookie. This package is based on [alexedwards/scs]("https://github.com/alexedwards/scs").
 
@@ -14,9 +14,9 @@ We wanted to provide a package that was more extensible, flexible, and has addit
 import (
     "github.com/alexedwards/scs/v2"
     "github.com/alexedwards/scs/v2/memstore"
-    "github.com/inquisico/session"
-    "github.com/inquisico/session/middleware"
-    "github.com/inquisico/session/store"
+    "github.com/inquisico/go-session"
+    "github.com/inquisico/go-session/middleware"
+    "github.com/inquisico/go-session/store"
 )
 
 func main() {

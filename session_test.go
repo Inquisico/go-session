@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/alexedwards/scs/v2/mockstore"
-	"github.com/inquisico/session/store"
+	"github.com/inquisico/go-session/store"
 )
 
 const (
