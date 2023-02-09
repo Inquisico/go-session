@@ -37,20 +37,20 @@ func TestSessionManager_Load(t *testing.T) {
 
 	t.Run("happy path", func(tt *testing.T) {
 		s := NewManager()
-		s.IdleTimeout = time.Hour * 24
+		s.defaultIdleTimeout = time.Hour * 24
 
 		ctx := context.Background()
 		expected := example
 		exampleDeadline := time.Now().Add(time.Hour)
 
-		encodedValue, err := s.Codec.Encode(exampleDeadline, map[string]interface{}{
+		encodedValue, err := s.codec.Encode(exampleDeadline, map[string]interface{}{
 			"things": "stuff",
 		})
 		if err != nil {
 			tt.Errorf("unexpected error encoding value: %v", err)
 		}
 
-		if err := s.Store.Commit(ctx, expected, encodedValue, exampleDeadline); err != nil {
+		if err := s.store.Commit(ctx, expected, encodedValue, exampleDeadline); err != nil {
 			tt.Errorf("error committing to session store: %v", err)
 		}
 
@@ -101,14 +101,14 @@ func TestSessionManager_Load(t *testing.T) {
 		expected := ""
 		exampleDeadline := time.Now().Add(time.Hour)
 
-		encodedValue, err := m.Codec.Encode(exampleDeadline, map[string]interface{}{
+		encodedValue, err := m.codec.Encode(exampleDeadline, map[string]interface{}{
 			"things": "stuff",
 		})
 		if err != nil {
 			t.Errorf("unexpected error encoding value: %v", err)
 		}
 
-		if err := m.Store.Commit(ctx, expected, encodedValue, exampleDeadline); err != nil {
+		if err := m.store.Commit(ctx, expected, encodedValue, exampleDeadline); err != nil {
 			t.Errorf("error committing to session store: %v", err)
 		}
 
@@ -144,7 +144,7 @@ func TestSessionManager_Load(t *testing.T) {
 		expected := example
 
 		s.ExpectFind(expected, []byte{}, true, errors.New("arbitrary"))
-		m.Store = store.NewStoreWrapper(s)
+		m.store = store.NewWrapper(s)
 
 		newCtx, err := m.Load(ctx, expected)
 		if err == nil {
@@ -193,7 +193,7 @@ func TestSessionManager_Load(t *testing.T) {
 		expected := example
 		exampleDeadline := time.Now().Add(time.Hour)
 
-		if err := s.Store.Commit(ctx, expected, []byte(""), exampleDeadline); err != nil {
+		if err := s.store.Commit(ctx, expected, []byte(""), exampleDeadline); err != nil {
 			t.Errorf("error committing to session store: %v", err)
 		}
 
@@ -212,7 +212,7 @@ func TestSessionManager_Commit(t *testing.T) {
 
 	t.Run("happy path", func(tt *testing.T) {
 		m := NewManager()
-		m.IdleTimeout = time.Hour * 24
+		m.defaultIdleTimeout = time.Hour * 24
 
 		expectedToken := example
 		expectedExpiry := time.Now().Add(time.Hour)
@@ -240,7 +240,7 @@ func TestSessionManager_Commit(t *testing.T) {
 
 	t.Run("with empty token", func(t *testing.T) {
 		m := NewManager()
-		m.IdleTimeout = time.Hour * 24
+		m.defaultIdleTimeout = time.Hour * 24
 
 		expectedToken := "XO6_D4NBpGP3D_BtekxTEO6o2ZvOzYnArauSQbgg" // #nosec
 		expectedExpiry := time.Now().Add(time.Hour)
@@ -268,7 +268,7 @@ func TestSessionManager_Commit(t *testing.T) {
 
 	t.Run("with expired deadline", func(t *testing.T) {
 		m := NewManager()
-		m.IdleTimeout = time.Millisecond
+		m.defaultIdleTimeout = time.Millisecond
 
 		expectedToken := example
 		expectedExpiry := time.Now().Add(time.Hour * -100)
@@ -296,7 +296,7 @@ func TestSessionManager_Commit(t *testing.T) {
 
 	t.Run("with error committing to store", func(t *testing.T) {
 		m := NewManager()
-		m.IdleTimeout = time.Hour * 24
+		m.defaultIdleTimeout = time.Hour * 24
 
 		s := &mockstore.MockStore{}
 		expectedErr := errors.New("arbitrary")
@@ -309,7 +309,7 @@ func TestSessionManager_Commit(t *testing.T) {
 			},
 			mu: sync.Mutex{},
 		}
-		expectedBytes, err := m.Codec.Encode(sd.deadline, sd.values)
+		expectedBytes, err := m.codec.Encode(sd.deadline, sd.values)
 		if err != nil {
 			t.Errorf("unexpected encode error: %v", err)
 		}
@@ -317,7 +317,7 @@ func TestSessionManager_Commit(t *testing.T) {
 		ctx := context.WithValue(context.Background(), m.contextKey, sd)
 
 		s.ExpectCommit(sd.token, expectedBytes, sd.deadline, expectedErr)
-		m.Store = store.NewStoreWrapper(s)
+		m.store = store.NewWrapper(s)
 
 		actualToken, _, err := m.Commit(ctx)
 		if actualToken != "" {
