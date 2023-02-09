@@ -1,4 +1,4 @@
-module github.com/inquisico/session
+module github.com/inquisico/go-session
 
 go 1.18
 
