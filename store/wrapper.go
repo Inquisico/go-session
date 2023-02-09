@@ -12,9 +12,9 @@ type Wrapper struct {
 	store scs.Store
 }
 
-// NewStoreWrapper returns a new context store that wraps a store that does
+// NewWrapper returns a new context store that wraps a store that does
 // not support contexts.
-func NewStoreWrapper(store scs.Store) *Wrapper {
+func NewWrapper(store scs.Store) *Wrapper {
 	return &Wrapper{
 		store: store,
 	}

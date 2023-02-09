@@ -21,23 +21,37 @@ func defaultErrorFunc(w http.ResponseWriter, _ *http.Request, err error) {
 type HTTPSessionManager struct {
 	manager *session.Manager
 
-	// Cookie contains the configuration settings for session cookies.
-	Cookie scs.SessionCookie
+	// cookieConfig contains the configuration settings for session cookies.
+	cookieConfig scs.SessionCookie
 
-	// ErrorFunc allows you to control behavior when an error is encountered by
+	// errorFunc allows you to control behavior when an error is encountered by
 	// the LoadAndSave middleware. The default behavior is for a HTTP 500
 	// "Internal Server Error" message to be sent to the client and the error
-	// logged using Go's standard logger. If a custom ErrorFunc is set, then
+	// logged using Go's standard logger. If a custom errorFunc is set, then
 	// control will be passed to this instead. A typical use would be to provide
 	// a function which logs the error and returns a customized HTML error page.
-	ErrorFunc func(http.ResponseWriter, *http.Request, error)
+	errorFunc func(http.ResponseWriter, *http.Request, error)
 }
 
-func NewHTTPSessionManager(manager *session.Manager) *HTTPSessionManager {
-	return &HTTPSessionManager{
+type Option func(*HTTPSessionManager)
+
+func WithErrorFunc(errorFunc func(http.ResponseWriter, *http.Request, error)) Option {
+	return func(m *HTTPSessionManager) {
+		m.errorFunc = errorFunc
+	}
+}
+
+func WithCookieConfig(cookieConfig scs.SessionCookie) Option {
+	return func(m *HTTPSessionManager) {
+		m.cookieConfig = cookieConfig
+	}
+}
+
+func NewHTTPSessionManager(manager *session.Manager, opts ...Option) *HTTPSessionManager {
+	m := &HTTPSessionManager{
 		manager:   manager,
-		ErrorFunc: defaultErrorFunc,
-		Cookie: scs.SessionCookie{
+		errorFunc: defaultErrorFunc,
+		cookieConfig: scs.SessionCookie{
 			Name:     "session",
 			Domain:   "",
 			HttpOnly: true,
@@ -47,6 +61,12 @@ func NewHTTPSessionManager(manager *session.Manager) *HTTPSessionManager {
 			SameSite: http.SameSiteLaxMode,
 		},
 	}
+
+	for _, opt := range opts {
+		opt(m)
+	}
+
+	return m
 }
 
 // LoadAndSave provides middleware which automatically loads and saves session
@@ -55,14 +75,14 @@ func NewHTTPSessionManager(manager *session.Manager) *HTTPSessionManager {
 func (s *HTTPSessionManager) LoadAndSave(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var token string
-		cookie, err := r.Cookie(s.Cookie.Name)
+		cookie, err := r.Cookie(s.cookieConfig.Name)
 		if err == nil {
 			token = cookie.Value
 		}
 
 		ctx, err := s.manager.Load(r.Context(), token)
 		if err != nil {
-			s.ErrorFunc(w, r, err)
+			s.errorFunc(w, r, err)
 			return
 		}
 
@@ -72,7 +92,7 @@ func (s *HTTPSessionManager) LoadAndSave(next http.Handler) http.Handler {
 
 		if sr.MultipartForm != nil {
 			err := sr.MultipartForm.RemoveAll()
-			s.ErrorFunc(w, r, err)
+			s.errorFunc(w, r, err)
 		}
 
 		token, expiry, err := s.manager.Save(ctx)
@@ -81,7 +101,7 @@ func (s *HTTPSessionManager) LoadAndSave(next http.Handler) http.Handler {
 			s.WriteSessionCookie(ctx, w, token, expiry)
 		case session.ErrUnmodified:
 		default:
-			s.ErrorFunc(w, r, err)
+			s.errorFunc(w, r, err)
 			return
 		}
 
@@ -108,19 +128,19 @@ func (s *HTTPSessionManager) LoadAndSave(next http.Handler) http.Handler {
 func (s *HTTPSessionManager) WriteSessionCookie(ctx context.Context, w http.ResponseWriter, token string,
 	expiry time.Time) {
 	cookie := &http.Cookie{
-		Name:     s.Cookie.Name,
+		Name:     s.cookieConfig.Name,
 		Value:    token,
-		Path:     s.Cookie.Path,
-		Domain:   s.Cookie.Domain,
-		Secure:   s.Cookie.Secure,
-		HttpOnly: s.Cookie.HttpOnly,
-		SameSite: s.Cookie.SameSite,
+		Path:     s.cookieConfig.Path,
+		Domain:   s.cookieConfig.Domain,
+		Secure:   s.cookieConfig.Secure,
+		HttpOnly: s.cookieConfig.HttpOnly,
+		SameSite: s.cookieConfig.SameSite,
 	}
 
 	if expiry.IsZero() {
 		cookie.Expires = time.Unix(1, 0)
 		cookie.MaxAge = -1
-	} else if s.Cookie.Persist || s.manager.GetBool(ctx, "__rememberMe") {
+	} else if s.cookieConfig.Persist || s.manager.GetBool(ctx, "__rememberMe") {
 		cookie.Expires = time.Unix(expiry.Unix()+1, 0)        // Round up to the nearest second.
 		cookie.MaxAge = int(time.Until(expiry).Seconds() + 1) // Round up to the nearest second.
 	}

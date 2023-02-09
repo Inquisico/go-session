@@ -106,8 +106,7 @@ func TestEnable(t *testing.T) {
 func TestLifetime(t *testing.T) {
 	t.Parallel()
 
-	sessionManager := session.NewManager()
-	sessionManager.Lifetime = 500 * time.Millisecond
+	sessionManager := session.NewManager(session.WithDefaultTTL(500 * time.Millisecond))
 	httpSessionManager := NewHTTPSessionManager(sessionManager)
 
 	mux := http.NewServeMux()
@@ -146,9 +145,10 @@ func TestLifetime(t *testing.T) {
 func TestIdleTimeout(t *testing.T) {
 	t.Parallel()
 
-	sessionManager := session.NewManager()
-	sessionManager.IdleTimeout = 200 * time.Millisecond
-	sessionManager.Lifetime = time.Second
+	sessionManager := session.NewManager(
+		session.WithDefaultTTL(time.Second),
+		session.WithDefaultIdleTimeout(200*time.Millisecond),
+	)
 	httpSessionManager := NewHTTPSessionManager(sessionManager)
 
 	mux := http.NewServeMux()
@@ -224,8 +224,8 @@ func TestDestroy(t *testing.T) {
 	header, _ := ts.execute(t, "/destroy")
 	cookie := header.Get("Set-Cookie")
 
-	if strings.HasPrefix(cookie, fmt.Sprintf("%s=;", httpSessionManager.Cookie.Name)) == false {
-		t.Fatalf("got %q: expected prefix %q", cookie, fmt.Sprintf("%s=;", httpSessionManager.Cookie.Name))
+	if strings.HasPrefix(cookie, fmt.Sprintf("%s=;", httpSessionManager.cookieConfig.Name)) == false {
+		t.Fatalf("got %q: expected prefix %q", cookie, fmt.Sprintf("%s=;", httpSessionManager.cookieConfig.Name))
 	}
 	if strings.Contains(cookie, "Expires=Thu, 01 Jan 1970 00:00:01 GMT") == false {
 		t.Fatalf("got %q: expected to contain %q", cookie, "Expires=Thu, 01 Jan 1970 00:00:01 GMT")
@@ -295,7 +295,7 @@ func TestRememberMe(t *testing.T) {
 
 	sessionManager := session.NewManager()
 	httpSessionManager := NewHTTPSessionManager(sessionManager)
-	httpSessionManager.Cookie.Persist = false
+	httpSessionManager.cookieConfig.Persist = false
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/put-normal", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

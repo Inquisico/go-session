@@ -5,10 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/alexedwards/scs/v2"
@@ -37,11 +35,19 @@ var (
 	ErrUnmodified = errors.New("unmodified")
 )
 
+type sessionData struct {
+	deadline time.Time
+	status   Status
+	token    string
+	values   map[string]interface{}
+	mu       sync.Mutex
+}
+
 type Option func(*sessionData)
 
-func WithLifetime(lifetime time.Duration) Option {
+func WithTTL(duration time.Duration) Option {
 	return func(s *sessionData) {
-		s.deadline = time.Now().Add(lifetime).UTC()
+		s.deadline = time.Now().Add(duration).UTC()
 	}
 }
 
@@ -51,20 +57,18 @@ func WithDeadline(deadline time.Time) Option {
 	}
 }
 
-type sessionData struct {
-	deadline time.Time
-	status   Status
-	token    string
-	values   map[string]interface{}
-	mu       sync.Mutex
-}
-
-func newSessionData(lifetime time.Duration) *sessionData {
-	return &sessionData{
+func newSessionData(lifetime time.Duration, opts ...Option) *sessionData {
+	sd := &sessionData{
 		deadline: time.Now().Add(lifetime).UTC(),
 		status:   Unmodified,
 		values:   make(map[string]interface{}),
 	}
+
+	for _, opt := range opts {
+		opt(sd)
+	}
+
+	return sd
 }
 
 func generateToken() (string, error) {
@@ -76,58 +80,75 @@ func generateToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-type contextKey string
-
-var (
-	contextKeyID      uint64
-	contextKeyIDMutex = &sync.Mutex{}
-)
-
-func generateContextKey() contextKey {
-	contextKeyIDMutex.Lock()
-	defer contextKeyIDMutex.Unlock()
-	atomic.AddUint64(&contextKeyID, 1)
-	return contextKey(fmt.Sprintf("session.%d", contextKeyID))
-}
-
 // Manager holds the configuration settings for your sessions.
 type Manager struct {
-	// IdleTimeout controls the maximum length of time a session can be inactive
+	// defaultIdleTimeout controls the maximum length of time a session can be inactive
 	// before it expires. For example, some applications may wish to set this so
-	// there is a timeout after 20 minutes of inactivity. By default IdleTimeout
+	// there is a timeout after 20 minutes of inactivity. By default defaultIdleTimeout
 	// is not set and there is no inactivity timeout.
-	IdleTimeout time.Duration
+	defaultIdleTimeout time.Duration
 
-	// Lifetime controls the maximum length of time that a session is valid for
+	// defaultTTL controls the maximum length of time that a session is valid for
 	// before it expires. The lifetime is an 'absolute expiry' which is set when
 	// the session is first created and does not change. The default value is 24
 	// hours.
-	Lifetime time.Duration
+	defaultTTL time.Duration
 
-	// Store controls the session store where the session data is persisted.
-	Store store.Store
+	// store controls the session store where the session data is persisted.
+	store store.Store
 
-	// Codec controls the encoder/decoder used to transform session data to a
+	// codec controls the encoder/decoder used to transform session data to a
 	// byte slice for use by the session store. By default session data is
 	// encoded/decoded using encoding/gob.
-	Codec scs.Codec
+	codec scs.Codec
 
 	// contextKey is the key used to set and retrieve the session data from a
 	// context.Context. It's automatically generated to ensure uniqueness.
 	contextKey contextKey
 }
 
+type ManagerOption func(*Manager)
+
+func WithDefaultIdleTimeout(duration time.Duration) ManagerOption {
+	return func(m *Manager) {
+		m.defaultIdleTimeout = duration
+	}
+}
+
+func WithDefaultTTL(duration time.Duration) ManagerOption {
+	return func(m *Manager) {
+		m.defaultTTL = duration
+	}
+}
+
+func WithStore(store store.Store) ManagerOption {
+	return func(m *Manager) {
+		m.store = store
+	}
+}
+
+func WithCodec(codec scs.Codec) ManagerOption {
+	return func(m *Manager) {
+		m.codec = codec
+	}
+}
+
 // NewManager returns a new session manager with the default options. It is safe for
 // concurrent use.
-func NewManager() *Manager {
-	s := &Manager{
-		IdleTimeout: 0,
-		Lifetime:    24 * time.Hour,
-		Store:       store.NewStoreWrapper(memstore.New()),
-		Codec:       scs.GobCodec{},
-		contextKey:  generateContextKey(),
+func NewManager(opts ...ManagerOption) *Manager {
+	m := &Manager{
+		defaultIdleTimeout: 0,
+		defaultTTL:         24 * time.Hour,
+		store:              store.NewWrapper(memstore.New()),
+		codec:              scs.GobCodec{},
+		contextKey:         generateContextKey(),
 	}
-	return s
+
+	for _, opt := range opts {
+		opt(m)
+	}
+
+	return m
 }
 
 func (s *Manager) Expire(ctx context.Context, expiry time.Time) {
@@ -151,21 +172,15 @@ func (s *Manager) Load(ctx context.Context, token string, options ...Option) (co
 	}
 
 	if token == "" {
-		sd := newSessionData(s.Lifetime)
-		for _, option := range options {
-			option(sd)
-		}
+		sd := newSessionData(s.defaultTTL, options...)
 		return s.addSessionDataToContext(ctx, sd), nil
 	}
 
-	b, found, err := s.Store.Find(ctx, token)
+	b, found, err := s.store.Find(ctx, token)
 	if err != nil {
 		return ctx, err
 	} else if !found {
-		sd := newSessionData(s.Lifetime)
-		for _, option := range options {
-			option(sd)
-		}
+		sd := newSessionData(s.defaultTTL, options...)
 		return s.addSessionDataToContext(ctx, sd), nil
 	}
 
@@ -173,14 +188,14 @@ func (s *Manager) Load(ctx context.Context, token string, options ...Option) (co
 		status: Unmodified,
 		token:  token,
 	}
-	if sd.deadline, sd.values, err = s.Codec.Decode(b); err != nil {
+	if sd.deadline, sd.values, err = s.codec.Decode(b); err != nil {
 		return ctx, err
 	}
 
 	// Mark the session data as modified if an idle timeout is being used. This
 	// will force the session data to be re-committed to the session store with
 	// a new expiry time.
-	if s.IdleTimeout > 0 {
+	if s.defaultIdleTimeout > 0 {
 		sd.status = Modified
 	}
 
@@ -227,20 +242,20 @@ func (s *Manager) Commit(ctx context.Context) (string, time.Time, error) {
 		}
 	}
 
-	b, err := s.Codec.Encode(sd.deadline, sd.values)
+	b, err := s.codec.Encode(sd.deadline, sd.values)
 	if err != nil {
 		return "", time.Time{}, err
 	}
 
 	expiry := sd.deadline
-	if s.IdleTimeout > 0 {
-		ie := time.Now().Add(s.IdleTimeout).UTC()
+	if s.defaultIdleTimeout > 0 {
+		ie := time.Now().Add(s.defaultIdleTimeout).UTC()
 		if ie.Before(expiry) {
 			expiry = ie
 		}
 	}
 
-	if err := s.Store.Commit(ctx, sd.token, b, expiry); err != nil {
+	if err := s.store.Commit(ctx, sd.token, b, expiry); err != nil {
 		return "", time.Time{}, err
 	}
 
@@ -256,7 +271,7 @@ func (s *Manager) Destroy(ctx context.Context, options ...Option) error {
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
-	err := s.Store.Delete(ctx, sd.token)
+	err := s.store.Delete(ctx, sd.token)
 	if err != nil {
 		return err
 	}
@@ -265,7 +280,7 @@ func (s *Manager) Destroy(ctx context.Context, options ...Option) error {
 
 	// Reset everything else to defaults.
 	sd.token = ""
-	sd.deadline = time.Now().Add(s.Lifetime).UTC()
+	sd.deadline = time.Now().Add(s.defaultTTL).UTC()
 	for _, option := range options {
 		option(sd)
 	}
@@ -415,7 +430,7 @@ func (s *Manager) RenewToken(ctx context.Context, options ...Option) error {
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
-	err := s.Store.Delete(ctx, sd.token)
+	err := s.store.Delete(ctx, sd.token)
 	if err != nil {
 		return err
 	}
@@ -426,7 +441,7 @@ func (s *Manager) RenewToken(ctx context.Context, options ...Option) error {
 	}
 
 	sd.token = newToken
-	sd.deadline = time.Now().Add(s.Lifetime).UTC()
+	sd.deadline = time.Now().Add(s.defaultTTL).UTC()
 	for _, option := range options {
 		option(sd)
 	}
@@ -441,14 +456,14 @@ func (s *Manager) RenewToken(ctx context.Context, options ...Option) error {
 func (s *Manager) MergeSession(ctx context.Context, token string) error {
 	sd := s.getSessionDataFromContext(ctx)
 
-	b, found, err := s.Store.Find(ctx, token)
+	b, found, err := s.store.Find(ctx, token)
 	if err != nil {
 		return err
 	} else if !found {
 		return nil
 	}
 
-	deadline, values, err := s.Codec.Decode(b)
+	deadline, values, err := s.codec.Decode(b)
 	if err != nil {
 		return err
 	}
@@ -470,7 +485,7 @@ func (s *Manager) MergeSession(ctx context.Context, token string) error {
 	}
 
 	sd.status = Modified
-	return s.Store.Delete(ctx, token)
+	return s.store.Delete(ctx, token)
 }
 
 // Status returns the current status of the session data.
@@ -670,7 +685,7 @@ func (s *Manager) RememberMe(ctx context.Context, val bool) {
 // executes the provided function fn for each session. If the session store
 // being used does not support iteration then Iterate will panic.
 func (s *Manager) Iterate(ctx context.Context, fn func(context.Context) error) error {
-	allSessions, err := s.Store.All(ctx)
+	allSessions, err := s.store.All(ctx)
 	if err != nil {
 		return err
 	}
@@ -681,7 +696,7 @@ func (s *Manager) Iterate(ctx context.Context, fn func(context.Context) error) e
 			token:  token,
 		}
 
-		sd.deadline, sd.values, err = s.Codec.Decode(b)
+		sd.deadline, sd.values, err = s.codec.Decode(b)
 		if err != nil {
 			return err
 		}
