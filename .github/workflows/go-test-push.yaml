@@ -13,17 +13,14 @@ on:
 jobs:
   go-test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        go: ["1.18"]
 
     steps:
       - name: Setup Go
-        uses: actions/setup-go@v2
+        uses: actions/setup-go@v3
         with:
-          go-version: ${{ matrix.go }}
+          go-version: "stable"
 
-      - uses: actions/cache@v2
+      - uses: actions/cache@v3
         with:
           path: |
             ~/go/pkg/mod
@@ -33,12 +30,7 @@ jobs:
             go-
 
       - name: Checkout
-        uses: actions/checkout@v2
-
-      - name: Configure git for private modules
-        env:
-          TOKEN: ${{ secrets.IQSC_BOT_TOKEN }}
-        run: git config --global url."https://iqsc-bot:${TOKEN}@github.com".insteadOf "https://github.com"
+        uses: actions/checkout@v3
 
       - name: Test
         run: go test -json ./... > test.json
@@ -47,6 +39,6 @@ jobs:
 
       - name: Annotate tests
         if: always()
-        uses: guyarb/golang-test-annotations@v0.4.0
+        uses: guyarb/golang-test-annotations@v0.5.1
         with:
           test-results: test.json
