@@ -1,18 +1,25 @@
 linters:
   enable:
+    - dupl
+    - errname
     - forbidigo
     - goconst
     - gocritic
     - gocyclo
     - godot
     - gosec
+    - ireturn
     - lll
     - misspell
     - nosprintfhostport
     - revive
     - wastedassign
     - whitespace
+    # - wrapcheck
 linters-settings:
+  godot:
+    exclude:
+      - "^\\WTODO:"
   revive:
     rules:
       - name: blank-imports
