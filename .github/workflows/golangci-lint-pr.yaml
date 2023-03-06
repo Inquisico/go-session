@@ -12,13 +12,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout PR head
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Checkout current
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
@@ -28,12 +28,12 @@ jobs:
           git config user.email github-actions@github.com
           git merge ${{ github.event.pull_request.head.sha }}
 
-      - name: Configure git for private modules
-        env:
-          TOKEN: ${{ secrets.IQSC_BOT_TOKEN }}
-        run: git config --global url."https://iqsc-bot:${TOKEN}@github.com".insteadOf "https://github.com"
+      - name: Setup Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: "stable"
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v2
+        uses: golangci/golangci-lint-action@v3
         with:
           args: --timeout=3m
