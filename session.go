@@ -151,15 +151,6 @@ func NewManager(opts ...ManagerOption) *Manager {
 	return m
 }
 
-func (s *Manager) Expire(ctx context.Context, expiry time.Time) {
-	sd := s.getSessionDataFromContext(ctx)
-
-	sd.mu.Lock()
-	defer sd.mu.Unlock()
-	sd.deadline = expiry
-	sd.status = Modified
-}
-
 // Load retrieves the session data for the given token from the session store,
 // and returns a new context.Context containing the session data. If no matching
 // token is found then this will create a new session.
@@ -710,6 +701,18 @@ func (s *Manager) Iterate(ctx context.Context, fn func(context.Context) error) e
 	}
 
 	return nil
+}
+
+// SetDeadline updates the 'absolute' expiry time for the session. Please note
+// that if you are using an idle timeout, it is possible that a session will
+// expire due to non-use before the set deadline.
+func (s *Manager) SetDeadline(ctx context.Context, expiry time.Time) {
+	sd := s.getSessionDataFromContext(ctx)
+
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
+	sd.deadline = expiry
+	sd.status = Modified
 }
 
 // Deadline returns the 'absolute' expiry time for the session. Please note

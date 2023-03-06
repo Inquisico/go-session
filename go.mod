@@ -3,8 +3,8 @@ module github.com/inquisico/go-session
 go 1.18
 
 require (
-	github.com/alexedwards/scs/v2 v2.5.0
-	github.com/rs/zerolog v1.28.0
+	github.com/alexedwards/scs/v2 v2.5.1
+	github.com/rs/zerolog v1.29.0
 )
 
 require (
