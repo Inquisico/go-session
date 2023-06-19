@@ -57,7 +57,7 @@ func New(client *redis.Client, opts ...Options) *Store {
 // If the session token is not found or is expired, the returned exists flag
 // will be set to false.
 func (s *Store) Find(ctx context.Context, token string) (b []byte, exists bool, err error) {
-	cmd := s.client.Get(ctx, token)
+	cmd := s.client.Get(ctx, s.prefix+token)
 	result, err := cmd.Bytes()
 	if err != nil {
 		if err == redis.Nil {
