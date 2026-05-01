@@ -1,3 +1,4 @@
+// Package store defines the interfaces used by session stores.
 package store
 
 import (

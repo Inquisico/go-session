@@ -1,23 +1,27 @@
+// Package middleware provides HTTP middleware for loading and saving sessions.
 package middleware
 
 import (
 	"bufio"
-	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"time"
 
 	"github.com/alexedwards/scs/v2"
-	"github.com/inquisico/go-session"
 	"github.com/rs/zerolog/log"
+
+	"github.com/inquisico/go-session"
 )
 
 func defaultErrorFunc(w http.ResponseWriter, _ *http.Request, err error) {
-	log.Error().Err(err)
+	log.Error().Err(err).Msg("session middleware error")
 	http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 }
 
+// HTTPSessionManager integrates a session manager with net/http middleware.
 type HTTPSessionManager struct {
 	manager *session.Manager
 
@@ -33,20 +37,24 @@ type HTTPSessionManager struct {
 	errorFunc func(http.ResponseWriter, *http.Request, error)
 }
 
+// Option configures an HTTPSessionManager.
 type Option func(*HTTPSessionManager)
 
+// WithErrorFunc sets the function used to handle middleware errors.
 func WithErrorFunc(errorFunc func(http.ResponseWriter, *http.Request, error)) Option {
 	return func(m *HTTPSessionManager) {
 		m.errorFunc = errorFunc
 	}
 }
 
+// WithCookieConfig sets the cookie configuration used for session cookies.
 func WithCookieConfig(cookieConfig scs.SessionCookie) Option {
 	return func(m *HTTPSessionManager) {
 		m.cookieConfig = cookieConfig
 	}
 }
 
+// NewHTTPSessionManager returns a new HTTP session middleware manager.
 func NewHTTPSessionManager(manager *session.Manager, opts ...Option) *HTTPSessionManager {
 	m := &HTTPSessionManager{
 		manager:   manager,
@@ -74,6 +82,8 @@ func NewHTTPSessionManager(manager *session.Manager, opts ...Option) *HTTPSessio
 // the client in a cookie.
 func (s *HTTPSessionManager) LoadAndSave(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Vary", "Cookie")
+
 		var token string
 		cookie, err := r.Cookie(s.cookieConfig.Name)
 		if err == nil {
@@ -87,32 +97,48 @@ func (s *HTTPSessionManager) LoadAndSave(next http.Handler) http.Handler {
 		}
 
 		sr := r.WithContext(ctx)
-		bw := &bufferedResponseWriter{ResponseWriter: w}
-		next.ServeHTTP(bw, sr)
+		sw := &sessionResponseWriter{
+			ResponseWriter: w,
+			request:        sr,
+			sessionManager: s,
+		}
+		next.ServeHTTP(sw, sr)
 
 		if sr.MultipartForm != nil {
-			err := sr.MultipartForm.RemoveAll()
-			s.errorFunc(w, r, err)
+			if err := sr.MultipartForm.RemoveAll(); err != nil {
+				if sw.written {
+					log.Error().Err(err).Msg("remove multipart form")
+				} else {
+					s.errorFunc(w, r, fmt.Errorf("remove multipart form: %w", err))
+				}
+				return
+			}
 		}
 
-		token, expiry, err := s.manager.Save(ctx)
-		switch err {
-		case nil:
-			s.WriteSessionCookie(ctx, w, token, expiry)
-		case session.ErrUnmodified:
-		default:
-			s.errorFunc(w, r, err)
-			return
+		if !sw.written {
+			if err := s.commitAndWriteSessionCookie(w, sr); err != nil {
+				s.errorFunc(w, r, err)
+				return
+			}
 		}
-
-		w.Header().Add("Vary", "Cookie")
-
-		if bw.code != 0 {
-			w.WriteHeader(bw.code)
-		}
-		_, err = w.Write(bw.buf.Bytes())
-		log.Error().Err(err)
 	})
+}
+
+func (s *HTTPSessionManager) commitAndWriteSessionCookie(w http.ResponseWriter, r *http.Request) error {
+	ctx := r.Context()
+
+	token, expiry, err := s.manager.Save(ctx)
+	if err != nil {
+		if errors.Is(err, session.ErrUnmodified) {
+			return nil
+		}
+
+		return fmt.Errorf("save session: %w", err)
+	}
+
+	s.WriteSessionCookie(ctx, w, token, expiry)
+
+	return nil
 }
 
 // WriteSessionCookie writes a cookie to the HTTP response with the provided
@@ -128,13 +154,14 @@ func (s *HTTPSessionManager) LoadAndSave(next http.Handler) http.Handler {
 func (s *HTTPSessionManager) WriteSessionCookie(ctx context.Context, w http.ResponseWriter, token string,
 	expiry time.Time) {
 	cookie := &http.Cookie{
-		Name:     s.cookieConfig.Name,
-		Value:    token,
-		Path:     s.cookieConfig.Path,
-		Domain:   s.cookieConfig.Domain,
-		Secure:   s.cookieConfig.Secure,
-		HttpOnly: s.cookieConfig.HttpOnly,
-		SameSite: s.cookieConfig.SameSite,
+		Name:        s.cookieConfig.Name,
+		Value:       token,
+		Path:        s.cookieConfig.Path,
+		Domain:      s.cookieConfig.Domain,
+		Secure:      s.cookieConfig.Secure,
+		HttpOnly:    s.cookieConfig.HttpOnly,
+		Partitioned: s.cookieConfig.Partitioned,
+		SameSite:    s.cookieConfig.SameSite,
 	}
 
 	if expiry.IsZero() {
@@ -149,32 +176,88 @@ func (s *HTTPSessionManager) WriteSessionCookie(ctx context.Context, w http.Resp
 	w.Header().Add("Cache-Control", `no-cache="Set-Cookie"`)
 }
 
-type bufferedResponseWriter struct {
+type sessionResponseWriter struct {
 	http.ResponseWriter
-	buf         bytes.Buffer
-	code        int
-	wroteHeader bool
+	request        *http.Request
+	sessionManager *HTTPSessionManager
+	written        bool
 }
 
-func (bw *bufferedResponseWriter) Write(b []byte) (int, error) {
-	return bw.buf.Write(b)
+func (sw *sessionResponseWriter) Write(b []byte) (int, error) {
+	if !sw.written {
+		if err := sw.sessionManager.commitAndWriteSessionCookie(sw.ResponseWriter, sw.request); err != nil {
+			sw.sessionManager.errorFunc(sw.ResponseWriter, sw.request, err)
+			return 0, err
+		}
+		sw.written = true
+	}
+
+	n, err := sw.ResponseWriter.Write(b)
+	if err != nil {
+		return n, fmt.Errorf("write response body: %w", err)
+	}
+
+	return n, nil
 }
 
-func (bw *bufferedResponseWriter) WriteHeader(code int) {
-	if !bw.wroteHeader {
-		bw.code = code
-		bw.wroteHeader = true
+func (sw *sessionResponseWriter) WriteHeader(code int) {
+	if !sw.written {
+		if err := sw.sessionManager.commitAndWriteSessionCookie(sw.ResponseWriter, sw.request); err != nil {
+			sw.sessionManager.errorFunc(sw.ResponseWriter, sw.request, err)
+			return
+		}
+		sw.written = true
+	}
+
+	sw.ResponseWriter.WriteHeader(code)
+}
+
+func (sw *sessionResponseWriter) Flush() {
+	if !sw.written {
+		if err := sw.sessionManager.commitAndWriteSessionCookie(sw.ResponseWriter, sw.request); err != nil {
+			sw.sessionManager.errorFunc(sw.ResponseWriter, sw.request, err)
+			return
+		}
+		sw.written = true
+	}
+
+	if flusher, ok := sw.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
 	}
 }
 
-func (bw *bufferedResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	hj := bw.ResponseWriter.(http.Hijacker)
-	return hj.Hijack()
+func (sw *sessionResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if !sw.written {
+		if err := sw.sessionManager.commitAndWriteSessionCookie(sw.ResponseWriter, sw.request); err != nil {
+			return nil, nil, err
+		}
+		sw.written = true
+	}
+
+	hj, ok := sw.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+
+	conn, rw, err := hj.Hijack()
+	if err != nil {
+		return nil, nil, fmt.Errorf("hijack response: %w", err)
+	}
+
+	return conn, rw, nil
 }
 
-func (bw *bufferedResponseWriter) Push(target string, opts *http.PushOptions) error {
-	if pusher, ok := bw.ResponseWriter.(http.Pusher); ok {
-		return pusher.Push(target, opts)
+func (sw *sessionResponseWriter) Push(target string, opts *http.PushOptions) error {
+	if pusher, ok := sw.ResponseWriter.(http.Pusher); ok {
+		if err := pusher.Push(target, opts); err != nil {
+			return fmt.Errorf("push response: %w", err)
+		}
+
+		return nil
 	}
 	return http.ErrNotSupported
+}
+
+func (sw *sessionResponseWriter) Unwrap() http.ResponseWriter {
+	return sw.ResponseWriter
 }

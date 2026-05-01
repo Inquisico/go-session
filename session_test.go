@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/alexedwards/scs/v2/mockstore"
+
 	"github.com/inquisico/go-session/store"
 )
 
@@ -286,7 +287,7 @@ func TestSessionManager_Commit(t *testing.T) {
 		if expectedToken != actualToken {
 			t.Errorf("expected token to equal %q, but received %q", expectedToken, actualToken)
 		}
-		if expectedExpiry == actualExpiry {
+		if expectedExpiry.Equal(actualExpiry) {
 			t.Errorf("expected expiry not to equal %v", actualExpiry)
 		}
 		if err != nil {

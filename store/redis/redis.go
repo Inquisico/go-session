@@ -1,32 +1,23 @@
+// Package redis provides a Redis-backed session store.
 package redis
 
 import (
 	"context"
 	"errors"
-	"regexp"
+	"fmt"
+	"strings"
 	"time"
-	"unsafe"
 
 	"github.com/redis/go-redis/v9"
 )
 
-// stringToBytes converts string to byte slice.
-func stringToBytes(s string) []byte {
-	return *(*[]byte)(unsafe.Pointer(
-		&struct {
-			string
-			Cap int
-		}{s, len(s)},
-	))
-}
-
 // Store represents the redis session store.
 type Store struct {
-	client        *redis.Client
-	prefix        string
-	prefixEscaped string
+	client *redis.Client
+	prefix string
 }
 
+// Options configures a Redis-backed session store.
 type Options func(*Store)
 
 // WithPrefix sets the parameter that controls the Redis key
@@ -34,12 +25,10 @@ type Options func(*Store)
 func WithPrefix(prefix string) Options {
 	return func(s *Store) {
 		s.prefix = prefix
-		s.prefixEscaped = regexp.QuoteMeta(prefix)
 	}
 }
 
-// New returns a new RedisStore instance. The pool parameter should be a pointer
-// to a redigo connection pool. See https://godoc.org/github.com/gomodule/redigo/redis#Pool.
+// New returns a new Redis-backed session store.
 func New(client *redis.Client, opts ...Options) *Store {
 	store := &Store{
 		client: client,
@@ -60,10 +49,10 @@ func (s *Store) Find(ctx context.Context, token string) (b []byte, exists bool, 
 	cmd := s.client.Get(ctx, s.prefix+token)
 	result, err := cmd.Bytes()
 	if err != nil {
-		if err == redis.Nil {
+		if errors.Is(err, redis.Nil) {
 			return nil, false, nil
 		}
-		return nil, false, err
+		return nil, false, fmt.Errorf("find session %q: %w", token, err)
 	}
 
 	return result, true, nil
@@ -74,52 +63,66 @@ func (s *Store) Find(ctx context.Context, token string) (b []byte, exists bool, 
 // expiry time are updated.
 func (s *Store) Commit(ctx context.Context, token string, b []byte, expiry time.Time) error {
 	cmd := s.client.SetArgs(ctx, s.prefix+token, b, redis.SetArgs{ExpireAt: expiry})
-	return cmd.Err()
+	if err := cmd.Err(); err != nil {
+		return fmt.Errorf("commit session %q: %w", token, err)
+	}
+
+	return nil
 }
 
 // Delete removes a session token and corresponding data from the RedisStore
 // instance.
 func (s *Store) Delete(ctx context.Context, token string) error {
-	cmd := s.client.Del(ctx, token)
-	return cmd.Err()
+	cmd := s.client.Del(ctx, s.prefix+token)
+	if err := cmd.Err(); err != nil {
+		return fmt.Errorf("delete session %q: %w", token, err)
+	}
+
+	return nil
 }
 
 // All returns a map containing the token and data for all active (i.e.
 // not expired) sessions in the RedisStore instance.
 func (s *Store) All(ctx context.Context) (map[string][]byte, error) {
-	keysCmd := s.client.Keys(ctx, s.prefixEscaped+"*")
-	keys, err := keysCmd.Result()
-	if err != nil {
-		if err == redis.Nil {
-			return nil, nil
-		}
-		return nil, err
+	iter := s.client.Scan(ctx, 0, s.prefix+"*", 0).Iterator()
+	keys := make([]string, 0)
+	for iter.Next(ctx) {
+		keys = append(keys, iter.Val())
+	}
+	if err := iter.Err(); err != nil {
+		return nil, fmt.Errorf("scan sessions: %w", err)
 	}
 
-	// Check if empty
-	keyLength := len(keys)
-	if keyLength == 0 {
+	if len(keys) == 0 {
 		return nil, nil
 	}
 
-	cmd := s.client.MGet(ctx, keys...)
-	values, err := cmd.Result()
-	if err != nil {
-		return nil, err
+	pipe := s.client.Pipeline()
+	cmds := make([]*redis.StringCmd, 0, len(keys))
+	for _, key := range keys {
+		cmds = append(cmds, pipe.Get(ctx, key))
 	}
 
-	if keyLength != len(values) {
-		return nil, errors.New("length of keys and values do not match")
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("load sessions: %w", err)
 	}
 
-	sessions := make(map[string][]byte)
-	for n, k := range keys {
-		v := values[n]
-		if v == redis.Nil {
+	sessions := make(map[string][]byte, len(keys))
+	for index, key := range keys {
+		value, err := cmds[index].Bytes()
+		if errors.Is(err, redis.Nil) {
 			continue
 		}
+		if err != nil {
+			return nil, fmt.Errorf("read session %q: %w", strings.TrimPrefix(key, s.prefix), err)
+		}
 
-		sessions[k] = stringToBytes(v.(string))
+		token := strings.TrimPrefix(key, s.prefix)
+		sessions[token] = value
+	}
+
+	if len(sessions) == 0 {
+		return nil, nil
 	}
 
 	return sessions, nil

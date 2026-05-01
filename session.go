@@ -5,12 +5,14 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/alexedwards/scs/v2"
 	"github.com/alexedwards/scs/v2/memstore"
+
 	"github.com/inquisico/go-session/store"
 )
 
@@ -32,6 +34,8 @@ const (
 )
 
 var (
+	// ErrUnmodified indicates that the session data did not change during the
+	// current request cycle.
 	ErrUnmodified = errors.New("unmodified")
 )
 
@@ -43,14 +47,17 @@ type sessionData struct {
 	mu       sync.Mutex
 }
 
+// Option configures a session instance during creation or reset.
 type Option func(*sessionData)
 
+// WithTTL sets the session deadline relative to the current time.
 func WithTTL(duration time.Duration) Option {
 	return func(s *sessionData) {
 		s.deadline = time.Now().Add(duration).UTC()
 	}
 }
 
+// WithDeadline sets the session deadline to an absolute time.
 func WithDeadline(deadline time.Time) Option {
 	return func(s *sessionData) {
 		s.deadline = deadline
@@ -75,7 +82,7 @@ func generateToken() (string, error) {
 	b := make([]byte, 32)
 	_, err := rand.Read(b)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("generate session token: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
@@ -107,26 +114,31 @@ type Manager struct {
 	contextKey contextKey
 }
 
+// ManagerOption configures a session manager.
 type ManagerOption func(*Manager)
 
+// WithDefaultIdleTimeout sets the default idle timeout for new sessions.
 func WithDefaultIdleTimeout(duration time.Duration) ManagerOption {
 	return func(m *Manager) {
 		m.defaultIdleTimeout = duration
 	}
 }
 
+// WithDefaultTTL sets the default absolute lifetime for new sessions.
 func WithDefaultTTL(duration time.Duration) ManagerOption {
 	return func(m *Manager) {
 		m.defaultTTL = duration
 	}
 }
 
+// WithStore sets the backing store used to persist sessions.
 func WithStore(store store.Store) ManagerOption {
 	return func(m *Manager) {
 		m.store = store
 	}
 }
 
+// WithCodec sets the codec used to encode and decode session data.
 func WithCodec(codec scs.Codec) ManagerOption {
 	return func(m *Manager) {
 		m.codec = codec
@@ -169,7 +181,7 @@ func (s *Manager) Load(ctx context.Context, token string, options ...Option) (co
 
 	b, found, err := s.store.Find(ctx, token)
 	if err != nil {
-		return ctx, err
+		return ctx, fmt.Errorf("find session %q: %w", token, err)
 	} else if !found {
 		sd := newSessionData(s.defaultTTL, options...)
 		return s.addSessionDataToContext(ctx, sd), nil
@@ -180,7 +192,7 @@ func (s *Manager) Load(ctx context.Context, token string, options ...Option) (co
 		token:  token,
 	}
 	if sd.deadline, sd.values, err = s.codec.Decode(b); err != nil {
-		return ctx, err
+		return ctx, fmt.Errorf("decode session %q: %w", token, err)
 	}
 
 	// Mark the session data as modified if an idle timeout is being used. This
@@ -201,6 +213,8 @@ func (s *Manager) Load(ctx context.Context, token string, options ...Option) (co
 // use this method.
 func (s *Manager) Save(ctx context.Context) (string, time.Time, error) {
 	switch s.Status(ctx) {
+	case Unmodified:
+		return "", time.Time{}, ErrUnmodified
 	case Modified:
 		token, expiry, err := s.Commit(ctx)
 		if err != nil {
@@ -212,7 +226,7 @@ func (s *Manager) Save(ctx context.Context) (string, time.Time, error) {
 		return "", time.Time{}, nil
 	}
 
-	return "", time.Time{}, ErrUnmodified
+	return "", time.Time{}, fmt.Errorf("unknown session status %d", s.Status(ctx))
 }
 
 // Commit saves the session data to the session store and returns the session
@@ -235,7 +249,7 @@ func (s *Manager) Commit(ctx context.Context) (string, time.Time, error) {
 
 	b, err := s.codec.Encode(sd.deadline, sd.values)
 	if err != nil {
-		return "", time.Time{}, err
+		return "", time.Time{}, fmt.Errorf("encode session %q: %w", sd.token, err)
 	}
 
 	expiry := sd.deadline
@@ -247,7 +261,7 @@ func (s *Manager) Commit(ctx context.Context) (string, time.Time, error) {
 	}
 
 	if err := s.store.Commit(ctx, sd.token, b, expiry); err != nil {
-		return "", time.Time{}, err
+		return "", time.Time{}, fmt.Errorf("commit session %q: %w", sd.token, err)
 	}
 
 	return sd.token, expiry, nil
@@ -264,7 +278,7 @@ func (s *Manager) Destroy(ctx context.Context, options ...Option) error {
 
 	err := s.store.Delete(ctx, sd.token)
 	if err != nil {
-		return err
+		return fmt.Errorf("delete session %q: %w", sd.token, err)
 	}
 
 	sd.status = Destroyed
@@ -404,14 +418,11 @@ func (s *Manager) Keys(ctx context.Context) []string {
 
 // RenewToken updates the session data to have a new session token while
 // retaining the current session data. The session lifetime is also reset and
-// the session data status will be set to Modified.
+// the session data status will be set to Modified. The old session token and
+// accompanying data are deleted from the session store.
 //
-// The old session token and accompanying data are deleted from the session store.
-//
-// To mitigate the risk of session fixation attacks, it's important that you call
-// RenewToken before making any changes to privilege levels (e.g. login and
-// logout operations).
-
+// To mitigate the risk of session fixation attacks, call RenewToken before
+// making any changes to privilege levels such as login and logout operations.
 // See https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/
 // Session_Management_Cheat_Sheet.md#renew-the-session-id-after-any-privilege-level-change
 // for additional information.
@@ -423,7 +434,7 @@ func (s *Manager) RenewToken(ctx context.Context, options ...Option) error {
 
 	err := s.store.Delete(ctx, sd.token)
 	if err != nil {
-		return err
+		return fmt.Errorf("delete session %q: %w", sd.token, err)
 	}
 
 	newToken, err := generateToken()
@@ -449,14 +460,14 @@ func (s *Manager) MergeSession(ctx context.Context, token string) error {
 
 	b, found, err := s.store.Find(ctx, token)
 	if err != nil {
-		return err
+		return fmt.Errorf("find session %q: %w", token, err)
 	} else if !found {
 		return nil
 	}
 
 	deadline, values, err := s.codec.Decode(b)
 	if err != nil {
-		return err
+		return fmt.Errorf("decode session %q: %w", token, err)
 	}
 
 	sd.mu.Lock()
@@ -476,7 +487,11 @@ func (s *Manager) MergeSession(ctx context.Context, token string) error {
 	}
 
 	sd.status = Modified
-	return s.store.Delete(ctx, token)
+	if err := s.store.Delete(ctx, token); err != nil {
+		return fmt.Errorf("delete merged session %q: %w", token, err)
+	}
+
+	return nil
 }
 
 // Status returns the current status of the session data.
@@ -674,13 +689,14 @@ func (s *Manager) RememberMe(ctx context.Context, val bool) {
 
 // Iterate retrieves all active (i.e. not expired) sessions from the store and
 // executes the provided function fn for each session. If the session store
-// being used does not support iteration then Iterate will panic.
+// being used does not support iteration then Iterate returns an error.
 func (s *Manager) Iterate(ctx context.Context, fn func(context.Context) error) error {
 	allSessions, err := s.store.All(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("list sessions: %w", err)
 	}
 
+	baseCtx := ctx
 	for token, b := range allSessions {
 		sd := &sessionData{
 			status: Unmodified,
@@ -689,12 +705,10 @@ func (s *Manager) Iterate(ctx context.Context, fn func(context.Context) error) e
 
 		sd.deadline, sd.values, err = s.codec.Decode(b)
 		if err != nil {
-			return err
+			return fmt.Errorf("decode session %q: %w", token, err)
 		}
 
-		ctx = s.addSessionDataToContext(ctx, sd)
-
-		err = fn(ctx)
+		err = fn(s.addSessionDataToContext(baseCtx, sd))
 		if err != nil {
 			return err
 		}

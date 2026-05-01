@@ -1,3 +1,4 @@
+// Package session provides server-side session management primitives.
 package session
 
 import (
