@@ -793,9 +793,9 @@ func TestManagerConcurrentMutations(t *testing.T) {
 	ctx := m.addSessionDataToContext(context.Background(), sd)
 
 	const (
-		workers       = 16
-		opsPerWorker  = 200
-		distinctKeys  = 8
+		workers      = 16
+		opsPerWorker = 200
+		distinctKeys = 8
 	)
 
 	keys := make([]string, distinctKeys)
