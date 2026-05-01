@@ -1,10 +1,12 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -37,7 +39,7 @@ func newTestServer(t *testing.T, h http.Handler) *testServer {
 	}
 	ts.Client().Jar = jar
 
-	ts.Client().CheckRedirect = func(req *http.Request, via []*http.Request) error {
+	ts.Client().CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
 
@@ -50,7 +52,11 @@ func (ts *testServer) execute(t *testing.T, urlPath string) (http.Header, string
 		t.Fatal(err)
 	}
 
-	defer rs.Body.Close()
+	defer func() {
+		if closeErr := rs.Body.Close(); closeErr != nil {
+			t.Fatal(closeErr)
+		}
+	}()
 	body, err := io.ReadAll(rs.Body)
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +77,7 @@ func TestEnable(t *testing.T) {
 	httpSessionManager := NewHTTPSessionManager(sessionManager)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/put", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/put", http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		sessionManager.Put(r.Context(), foo, bar)
 	}))
 	mux.HandleFunc("/get", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -110,7 +116,7 @@ func TestLifetime(t *testing.T) {
 	httpSessionManager := NewHTTPSessionManager(sessionManager)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/put", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/put", http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		sessionManager.Put(r.Context(), foo, bar)
 	}))
 	mux.HandleFunc("/get", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -152,7 +158,7 @@ func TestIdleTimeout(t *testing.T) {
 	httpSessionManager := NewHTTPSessionManager(sessionManager)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/put", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/put", http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		sessionManager.Put(r.Context(), foo, bar)
 	}))
 	mux.HandleFunc("/get", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -195,7 +201,7 @@ func TestDestroy(t *testing.T) {
 	httpSessionManager := NewHTTPSessionManager(sessionManager)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/put", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/put", http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		sessionManager.Put(r.Context(), foo, bar)
 	}))
 	mux.HandleFunc("/destroy", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -247,7 +253,7 @@ func TestRenewToken(t *testing.T) {
 	httpSessionManager := NewHTTPSessionManager(sessionManager)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/put", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/put", http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		sessionManager.Put(r.Context(), foo, bar)
 	}))
 	mux.HandleFunc("/renew", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -298,14 +304,14 @@ func TestRememberMe(t *testing.T) {
 	httpSessionManager.cookieConfig.Persist = false
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/put-normal", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/put-normal", http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		sessionManager.Put(r.Context(), foo, bar)
 	}))
-	mux.HandleFunc("/put-rememberMe-true", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/put-rememberMe-true", http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		sessionManager.RememberMe(r.Context(), true)
 		sessionManager.Put(r.Context(), foo, bar)
 	}))
-	mux.HandleFunc("/put-rememberMe-false", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/put-rememberMe-false", http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		sessionManager.RememberMe(r.Context(), false)
 		sessionManager.Put(r.Context(), foo, bar)
 	}))
@@ -342,7 +348,7 @@ func TestIterate(t *testing.T) {
 	httpSessionManager := NewHTTPSessionManager(sessionManager)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/put", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/put", http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		sessionManager.Put(r.Context(), foo, r.URL.Query().Get(foo))
 	}))
 
@@ -371,10 +377,92 @@ func TestIterate(t *testing.T) {
 		t.Fatalf("unexpected value: got %v", results)
 	}
 
-	err = sessionManager.Iterate(context.Background(), func(ctx context.Context) error {
+	err = sessionManager.Iterate(context.Background(), func(_ context.Context) error {
 		return errors.New("expected error")
 	})
 	if err.Error() != "expected error" {
 		t.Fatal("didn't get expected error")
+	}
+}
+
+func TestLoadAndSaveMultipartCleanupDoesNotErrorOnSuccess(t *testing.T) {
+	t.Parallel()
+
+	sessionManager := session.NewManager()
+	httpSessionManager := NewHTTPSessionManager(sessionManager)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("upload", "example.txt")
+	if err != nil {
+		t.Fatalf("create multipart form file: %v", err)
+	}
+	if _, err := part.Write([]byte("payload")); err != nil {
+		t.Fatalf("write multipart form file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	handler := httpSessionManager.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 1024)
+		if err := r.ParseMultipartForm(1024); err != nil { //nolint:gosec // body is bounded by MaxBytesReader above
+			t.Fatalf("parse multipart form: %v", err)
+		}
+
+		sessionManager.Put(r.Context(), foo, bar)
+		w.WriteHeader(http.StatusCreated)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/upload", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d", http.StatusCreated, recorder.Code)
+	}
+	if recorder.Header().Get("Set-Cookie") == "" {
+		t.Fatal("expected session cookie to be written")
+	}
+}
+
+func TestLoadAndSaveExposesFlusher(t *testing.T) {
+	t.Parallel()
+
+	sessionManager := session.NewManager()
+	httpSessionManager := NewHTTPSessionManager(sessionManager)
+
+	handler := httpSessionManager.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sessionManager.Put(r.Context(), foo, bar)
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("expected response writer to implement http.Flusher")
+		}
+
+		if _, err := w.Write([]byte("chunk-1")); err != nil {
+			t.Fatalf("write first chunk: %v", err)
+		}
+		flusher.Flush()
+		if _, err := w.Write([]byte("chunk-2")); err != nil {
+			t.Fatalf("write second chunk: %v", err)
+		}
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/stream", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	}
+	if recorder.Body.String() != "chunk-1chunk-2" {
+		t.Fatalf("unexpected body %q", recorder.Body.String())
+	}
+	if recorder.Header().Get("Set-Cookie") == "" {
+		t.Fatal("expected session cookie to be written before streaming")
 	}
 }

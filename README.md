@@ -2,7 +2,7 @@
 
 [![Go Lint](https://github.com/inquisico/go-session/actions/workflows/golangci-lint-push.yaml/badge.svg)](https://github.com/inquisico/go-session/actions/workflows/golangci-lint-push.yaml) [![Go Test](https://github.com/inquisico/go-session/actions/workflows/go-test-push.yaml/badge.svg)](https://github.com/inquisico/go-session/actions/workflows/go-test-push.yaml) [![Release Drafter](https://github.com/inquisico/go-session/actions/workflows/release-drafter.yaml/badge.svg)](https://github.com/inquisico/go-session/actions/workflows/release-drafter.yaml)
 
-Session implements a session management pattern following the [OWASP security guidelines](https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Session_Management_Cheat_Sheet.md). Session data is stored on the server, and a randomly-generated unique session token (or *session ID*) is communicated to and from the client in a session cookie. This package is based on [alexedwards/scs](https://github.com/alexedwards/scs).
+Session implements a server-side session management pattern informed by the [OWASP session management guidance](https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Session_Management_Cheat_Sheet.md). Session data is stored on the server, and a randomly-generated unique session token (or *session ID*) is communicated to and from the client in a session cookie. This package is based on [alexedwards/scs](https://github.com/alexedwards/scs).
 
 ## Why go-session
 
@@ -19,10 +19,13 @@ $ go get github.com/inquisico/go-session
 
 ```go
 import (
+    "net/http"
+    "time"
+
     "github.com/alexedwards/scs/v2"
     "github.com/alexedwards/scs/v2/memstore"
-    "github.com/inquisico/go-session"
-    "github.com/inquisico/go-session/middleware"
+    session "github.com/inquisico/go-session"
+    sessionmiddleware "github.com/inquisico/go-session/middleware"
     "github.com/inquisico/go-session/store"
 )
 
@@ -39,26 +42,27 @@ func main() {
         HttpOnly: true,
         Path:     "/",
         Persist:  true,
-        Secure:   false,
-        SameSite: http.SameSiteLaxMode,
+        Secure:   true,
+        SameSite: http.SameSiteStrictMode,
     }
 
-    middleware := middleware.NewHTTPSessionManager(
+    httpSessionManager := sessionmiddleware.NewHTTPSessionManager(
         sessionManager,
-        session.WithErrorFunc(errorFunc), // Optional
-        session.WithCookieConfig(cookieConfig), // Optional
+        sessionmiddleware.WithCookieConfig(cookieConfig), // Optional
     )
 
-    // Put `middleware` into your http server
+    // Put `httpSessionManager` into your http server
     // See: https://www.alexedwards.net/blog/making-and-using-middleware
     // ...
 }
 ```
 
+For local HTTP development, set `Secure` to `false`. If your application depends on cross-site redirects or OAuth callbacks, `SameSite=Lax` or `SameSite=None` may be more appropriate than `Strict`.
+
 ## Creating your own store
 
-The interface for store can be found in store/store.go. You can implement your own store that implements that interface. See [go-session/store](github.com/inquisico/go-session/store) for examples.
+The store interface can be found in `store/store.go`. You can implement your own store by satisfying that interface. See [go-session/store](https://github.com/inquisico/go-session/tree/main/store) for examples.
 
 ## Compatible session stores
 
-Inquisico managed session stores can be found at [go-session/store](github.com/inquisico/go-session/store). If you require a more extensive set of seesion stores, you may check out [more compatible session stores](https://github.com/alexedwards/scs#configuring-the-session-store) for your desired store.
+Inquisico-managed session stores can be found at [go-session/store](https://github.com/inquisico/go-session/tree/main/store). If you require a more extensive set of session stores, you may check out [more compatible session stores](https://github.com/alexedwards/scs#configuring-the-session-store) for your desired store.

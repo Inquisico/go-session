@@ -4,7 +4,7 @@ all: update run
 
 update:
 	@go mod tidy \
-		&& go mod vendor
+		&& go work vendor
 
 lint:
 	@golangci-lint run ./...
