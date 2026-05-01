@@ -153,7 +153,7 @@ func (s *HTTPSessionManager) commitAndWriteSessionCookie(w http.ResponseWriter, 
 // use this method.
 func (s *HTTPSessionManager) WriteSessionCookie(ctx context.Context, w http.ResponseWriter, token string,
 	expiry time.Time) {
-	cookie := &http.Cookie{
+	cookie := &http.Cookie{ //nolint:gosec // Secure, HttpOnly, and SameSite are set from cookieConfig below
 		Name:        s.cookieConfig.Name,
 		Value:       token,
 		Path:        s.cookieConfig.Path,

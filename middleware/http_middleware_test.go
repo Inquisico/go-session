@@ -406,7 +406,7 @@ func TestLoadAndSaveMultipartCleanupDoesNotErrorOnSuccess(t *testing.T) {
 
 	handler := httpSessionManager.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 1024)
-		if err := r.ParseMultipartForm(1024); err != nil {
+		if err := r.ParseMultipartForm(1024); err != nil { //nolint:gosec // body is bounded by MaxBytesReader above
 			t.Fatalf("parse multipart form: %v", err)
 		}
 

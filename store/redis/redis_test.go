@@ -9,7 +9,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-func newTestStore(t *testing.T, opts ...Options) (*Store, *miniredis.Miniredis, *goredis.Client) {
+func newTestStore(t *testing.T, opts ...Option) (*Store, *miniredis.Miniredis, *goredis.Client) {
 	t.Helper()
 
 	server, err := miniredis.Run()

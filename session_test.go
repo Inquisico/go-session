@@ -19,6 +19,7 @@ const (
 	foo     = "foo"
 	bar     = "bar"
 	example = "example"
+	blah    = "blah"
 )
 
 func TestSessionDataFromContext(t *testing.T) {
@@ -223,7 +224,7 @@ func TestSessionManager_Commit(t *testing.T) {
 			deadline: expectedExpiry,
 			token:    expectedToken,
 			values: map[string]interface{}{
-				"blah": "blah",
+				blah: blah,
 			},
 			mu: sync.Mutex{},
 		})
@@ -250,7 +251,7 @@ func TestSessionManager_Commit(t *testing.T) {
 			deadline: expectedExpiry,
 			token:    "",
 			values: map[string]interface{}{
-				"blah": "blah",
+				blah: blah,
 			},
 		})
 
@@ -277,7 +278,7 @@ func TestSessionManager_Commit(t *testing.T) {
 			deadline: time.Now().Add(time.Hour * 24),
 			token:    expectedToken,
 			values: map[string]interface{}{
-				"blah": "blah",
+				blah: blah,
 			},
 			mu: sync.Mutex{},
 		})
@@ -305,7 +306,7 @@ func TestSessionManager_Commit(t *testing.T) {
 			deadline: time.Now().Add(time.Hour),
 			token:    example,
 			values: map[string]interface{}{
-				"blah": "blah",
+				blah: blah,
 			},
 			mu: sync.Mutex{},
 		}
