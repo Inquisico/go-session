@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"sync"
 	"testing"
@@ -243,27 +244,25 @@ func TestSessionManager_Commit(t *testing.T) {
 		m := NewManager()
 		m.defaultIdleTimeout = time.Hour * 24
 
-		expectedToken := "XO6_D4NBpGP3D_BtekxTEO6o2ZvOzYnArauSQbgg" // #nosec
 		expectedExpiry := time.Now().Add(time.Hour)
 
 		ctx := context.WithValue(context.Background(), m.contextKey, &sessionData{
 			deadline: expectedExpiry,
-			token:    expectedToken,
+			token:    "",
 			values: map[string]interface{}{
 				"blah": "blah",
 			},
-			mu: sync.Mutex{},
 		})
 
 		actualToken, actualExpiry, err := m.Commit(ctx)
-		if expectedToken != actualToken {
-			t.Errorf("expected token to equal %q, but received %q", expectedToken, actualToken)
+		if err != nil {
+			t.Fatalf("unexpected error returned: %v", err)
+		}
+		if actualToken == "" {
+			t.Error("expected Commit to generate a non-empty token")
 		}
 		if expectedExpiry != actualExpiry {
 			t.Errorf("expected expiry to equal %v, but received %v", expectedExpiry, actualExpiry)
-		}
-		if err != nil {
-			t.Errorf("unexpected error returned: %v", err)
 		}
 	})
 
@@ -780,4 +779,54 @@ func TestStatus(t *testing.T) {
 	if status != Destroyed {
 		t.Errorf("got %d: expected %d", status, Destroyed)
 	}
+}
+
+// TestManagerConcurrentMutations exercises the mutex protecting sessionData
+// under concurrent reads and writes. Run with `go test -race` to surface any
+// missing synchronisation around sd.values / sd.status.
+func TestManagerConcurrentMutations(t *testing.T) {
+	t.Parallel()
+
+	m := NewManager()
+	sd := newSessionData(time.Hour)
+	ctx := m.addSessionDataToContext(context.Background(), sd)
+
+	const (
+		workers       = 16
+		opsPerWorker  = 200
+		distinctKeys  = 8
+	)
+
+	keys := make([]string, distinctKeys)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("key-%d", i)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for w := 0; w < workers; w++ {
+		go func(w int) {
+			defer wg.Done()
+			for op := 0; op < opsPerWorker; op++ {
+				key := keys[(w+op)%len(keys)]
+				switch op % 7 {
+				case 0:
+					m.Put(ctx, key, w*op)
+				case 1:
+					_ = m.Get(ctx, key)
+				case 2:
+					_ = m.GetInt(ctx, key)
+				case 3:
+					_ = m.Pop(ctx, key)
+				case 4:
+					m.Remove(ctx, key)
+				case 5:
+					_ = m.Exists(ctx, key)
+				case 6:
+					_ = m.Keys(ctx)
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
 }

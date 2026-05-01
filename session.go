@@ -39,6 +39,10 @@ var (
 	ErrUnmodified = errors.New("unmodified")
 )
 
+// rememberMeKey is the session value key used to flag the session as
+// persistent across browser restarts.
+const rememberMeKey = "__rememberMe"
+
 type sessionData struct {
 	deadline time.Time
 	status   Status
@@ -289,9 +293,7 @@ func (s *Manager) Destroy(ctx context.Context, options ...Option) error {
 	for _, option := range options {
 		option(sd)
 	}
-	for key := range sd.values {
-		delete(sd.values, key)
-	}
+	clear(sd.values)
 
 	return nil
 }
@@ -379,9 +381,7 @@ func (s *Manager) Clear(ctx context.Context) error {
 		return nil
 	}
 
-	for key := range sd.values {
-		delete(sd.values, key)
-	}
+	clear(sd.values)
 	sd.status = Modified
 	return nil
 }
@@ -684,7 +684,14 @@ func (s *Manager) PopTime(ctx context.Context, key string) time.Time {
 // if you have set SessionManager.Cookie.Persist = false (the default is true) and
 // you are using the standard LoadAndSave() middleware.
 func (s *Manager) RememberMe(ctx context.Context, val bool) {
-	s.Put(ctx, "__rememberMe", val)
+	s.Put(ctx, rememberMeKey, val)
+}
+
+// IsRememberMe reports whether RememberMe(true) was set on the current
+// session. It is intended for use by middleware that adjusts cookie persistence
+// based on the remember-me flag.
+func (s *Manager) IsRememberMe(ctx context.Context) bool {
+	return s.GetBool(ctx, rememberMeKey)
 }
 
 // Iterate retrieves all active (i.e. not expired) sessions from the store and
@@ -760,7 +767,7 @@ func (s *Manager) addSessionDataToContext(ctx context.Context, sd *sessionData) 
 func (s *Manager) getSessionDataFromContext(ctx context.Context) *sessionData {
 	c, ok := ctx.Value(s.contextKey).(*sessionData)
 	if !ok {
-		panic("scs: no session data in context")
+		panic("session: no session data in context")
 	}
 	return c
 }

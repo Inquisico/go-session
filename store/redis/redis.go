@@ -17,19 +17,19 @@ type Store struct {
 	prefix string
 }
 
-// Options configures a Redis-backed session store.
-type Options func(*Store)
+// Option configures a Redis-backed session store.
+type Option func(*Store)
 
 // WithPrefix sets the parameter that controls the Redis key
 // prefix, which can be used to avoid naming clashes if necessary.
-func WithPrefix(prefix string) Options {
+func WithPrefix(prefix string) Option {
 	return func(s *Store) {
 		s.prefix = prefix
 	}
 }
 
 // New returns a new Redis-backed session store.
-func New(client *redis.Client, opts ...Options) *Store {
+func New(client *redis.Client, opts ...Option) *Store {
 	store := &Store{
 		client: client,
 		prefix: "scs:session:",
@@ -43,9 +43,9 @@ func New(client *redis.Client, opts ...Options) *Store {
 }
 
 // Find returns the data for a given session token from the RedisStore instance.
-// If the session token is not found or is expired, the returned exists flag
+// If the session token is not found or is expired, the returned found flag
 // will be set to false.
-func (s *Store) Find(ctx context.Context, token string) (b []byte, exists bool, err error) {
+func (s *Store) Find(ctx context.Context, token string) (b []byte, found bool, err error) {
 	cmd := s.client.Get(ctx, s.prefix+token)
 	result, err := cmd.Bytes()
 	if err != nil {

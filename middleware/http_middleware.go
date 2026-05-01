@@ -167,7 +167,7 @@ func (s *HTTPSessionManager) WriteSessionCookie(ctx context.Context, w http.Resp
 	if expiry.IsZero() {
 		cookie.Expires = time.Unix(1, 0)
 		cookie.MaxAge = -1
-	} else if s.cookieConfig.Persist || s.manager.GetBool(ctx, "__rememberMe") {
+	} else if s.cookieConfig.Persist || s.manager.IsRememberMe(ctx) {
 		cookie.Expires = time.Unix(expiry.Unix()+1, 0)        // Round up to the nearest second.
 		cookie.MaxAge = int(time.Until(expiry).Seconds() + 1) // Round up to the nearest second.
 	}
