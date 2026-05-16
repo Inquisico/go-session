@@ -47,7 +47,7 @@ type sessionData struct {
 	deadline time.Time
 	status   Status
 	token    string
-	values   map[string]interface{}
+	values   map[string]any
 	mu       sync.Mutex
 }
 
@@ -72,7 +72,7 @@ func newSessionData(lifetime time.Duration, opts ...Option) *sessionData {
 	sd := &sessionData{
 		deadline: time.Now().Add(lifetime).UTC(),
 		status:   Unmodified,
-		values:   make(map[string]interface{}),
+		values:   make(map[string]any),
 	}
 
 	for _, opt := range opts {
@@ -216,21 +216,17 @@ func (s *Manager) Load(ctx context.Context, token string, options ...Option) (co
 // Most applications will use the LoadAndSave() middleware and will not need to
 // use this method.
 func (s *Manager) Save(ctx context.Context) (string, time.Time, error) {
-	switch s.Status(ctx) {
+	status := s.Status(ctx)
+	switch status {
 	case Unmodified:
 		return "", time.Time{}, ErrUnmodified
 	case Modified:
-		token, expiry, err := s.Commit(ctx)
-		if err != nil {
-			return "", time.Time{}, err
-		}
-
-		return token, expiry, nil
+		return s.Commit(ctx)
 	case Destroyed:
 		return "", time.Time{}, nil
 	}
 
-	return "", time.Time{}, fmt.Errorf("unknown session status %d", s.Status(ctx))
+	return "", time.Time{}, fmt.Errorf("unknown session status %d", status)
 }
 
 // Commit saves the session data to the session store and returns the session
@@ -301,7 +297,7 @@ func (s *Manager) Destroy(ctx context.Context, options ...Option) error {
 // Put adds a key and corresponding value to the session data. Any existing
 // value for the key will be replaced. The session data status will be set to
 // Modified.
-func (s *Manager) Put(ctx context.Context, key string, val interface{}) {
+func (s *Manager) Put(ctx context.Context, key string, val any) {
 	sd := s.getSessionDataFromContext(ctx)
 
 	sd.mu.Lock()
@@ -311,7 +307,7 @@ func (s *Manager) Put(ctx context.Context, key string, val interface{}) {
 }
 
 // Get returns the value for a given key from the session data. The return
-// value has the type interface{} so will usually need to be type asserted
+// value has the type any so will usually need to be type asserted
 // before you can use it. For example:
 //
 //	foo, ok := session.Get(r, "foo").(string)
@@ -321,7 +317,7 @@ func (s *Manager) Put(ctx context.Context, key string, val interface{}) {
 //
 // Also see the GetString(), GetInt(), GetBytes() and other helper methods which
 // wrap the type conversion for common types.
-func (s *Manager) Get(ctx context.Context, key string) interface{} {
+func (s *Manager) Get(ctx context.Context, key string) any {
 	sd := s.getSessionDataFromContext(ctx)
 
 	sd.mu.Lock()
@@ -333,8 +329,8 @@ func (s *Manager) Get(ctx context.Context, key string) interface{} {
 // Pop acts like a one-time Get. It returns the value for a given key from the
 // session data and deletes the key and value from the session data. The
 // session data status will be set to Modified. The return value has the type
-// interface{} so will usually need to be type asserted before you can use it.
-func (s *Manager) Pop(ctx context.Context, key string) interface{} {
+// any so will usually need to be type asserted before you can use it.
+func (s *Manager) Pop(ctx context.Context, key string) any {
 	sd := s.getSessionDataFromContext(ctx)
 
 	sd.mu.Lock()
@@ -412,6 +408,7 @@ func (s *Manager) Keys(ctx context.Context) []string {
 	}
 	sd.mu.Unlock()
 
+	// Sort outside the lock — keys is local once copied.
 	sort.Strings(keys)
 	return keys
 }
@@ -432,14 +429,13 @@ func (s *Manager) RenewToken(ctx context.Context, options ...Option) error {
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
-	err := s.store.Delete(ctx, sd.token)
-	if err != nil {
-		return fmt.Errorf("delete session %q: %w", sd.token, err)
-	}
-
 	newToken, err := generateToken()
 	if err != nil {
 		return err
+	}
+
+	if err := s.store.Delete(ctx, sd.token); err != nil {
+		return fmt.Errorf("delete session %q: %w", sd.token, err)
 	}
 
 	sd.token = newToken
@@ -458,6 +454,16 @@ func (s *Manager) RenewToken(ctx context.Context, options ...Option) error {
 func (s *Manager) MergeSession(ctx context.Context, token string) error {
 	sd := s.getSessionDataFromContext(ctx)
 
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
+
+	// If it is the same session, nothing needs to be done.
+	if sd.token == token {
+		return nil
+	}
+
+	// Find/Delete happen under the lock so two concurrent merges of the same
+	// external token can't double-apply its values.
 	b, found, err := s.store.Find(ctx, token)
 	if err != nil {
 		return fmt.Errorf("find session %q: %w", token, err)
@@ -468,14 +474,6 @@ func (s *Manager) MergeSession(ctx context.Context, token string) error {
 	deadline, values, err := s.codec.Decode(b)
 	if err != nil {
 		return fmt.Errorf("decode session %q: %w", token, err)
-	}
-
-	sd.mu.Lock()
-	defer sd.mu.Unlock()
-
-	// If it is the same session, nothing needs to be done.
-	if sd.token == token {
-		return nil
 	}
 
 	if deadline.After(sd.deadline) {
